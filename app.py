@@ -1,0 +1,238 @@
+import joblib
+import numpy as np
+import pandas as pd
+import streamlit as st
+import tensorflow as tf
+from PIL import Image
+
+st.set_page_config(page_title="Lung Cancer AI Demo", layout="wide")
+
+# -------------------------
+# Model paths
+# -------------------------
+XGB_PATH = "models/lung_cancer_calibrated_pipeline.joblib"
+OLD_CNN_PATH = "models/lung_histology_old_cnn.keras"
+NEW_CNN_PATH = "models/lung_histology_cnn.keras"
+
+# -------------------------
+# Constants
+# -------------------------
+IMG_HEIGHT = 150
+IMG_WIDTH = 150
+CLASS_NAMES = ["lung_aca", "lung_n", "lung_scc"]
+DISPLAY_LABELS = {
+    "lung_aca": "Adenocarcinoma",
+    "lung_n": "Benign",
+    "lung_scc": "Squamous Cell Carcinoma",
+}
+
+# Change this if your chosen threshold was different
+XGB_THRESHOLD = 0.50
+
+FEATURE_COLUMNS = [
+    "AGE",
+    "GENDER",
+    "SMOKING",
+    "FINGER_DISCOLORATION",
+    "MENTAL_STRESS",
+    "EXPOSURE_TO_POLLUTION",
+    "LONG_TERM_ILLNESS",
+    "ENERGY_LEVEL",
+    "IMMUNE_WEAKNESS",
+    "BREATHING_ISSUE",
+    "ALCOHOL_CONSUMPTION",
+    "THROAT_DISCOMFORT",
+    "OXYGEN_SATURATION",
+    "CHEST_TIGHTNESS",
+    "FAMILY_HISTORY",
+    "SMOKING_FAMILY_HISTORY",
+    "STRESS_IMMUNE",
+]
+
+# -------------------------
+# Load models
+# -------------------------
+@st.cache_resource
+def load_xgb():
+    return joblib.load(XGB_PATH)
+
+@st.cache_resource
+def load_old_cnn():
+    return tf.keras.models.load_model(OLD_CNN_PATH)
+
+@st.cache_resource
+def load_new_cnn():
+    return tf.keras.models.load_model(NEW_CNN_PATH)
+
+xgb_model = load_xgb()
+old_cnn = load_old_cnn()
+new_cnn = load_new_cnn()
+
+# -------------------------
+# Helpers
+# -------------------------
+def preprocess_image(uploaded_file):
+    image = Image.open(uploaded_file).convert("RGB")
+    image_resized = image.resize((IMG_WIDTH, IMG_HEIGHT))
+    arr = np.array(image_resized).astype("float32") / 255.0
+    arr = np.expand_dims(arr, axis=0)
+    return image, arr
+
+def predict_cnn(model, arr):
+    probs = model.predict(arr, verbose=0)[0]
+    pred_idx = int(np.argmax(probs))
+    pred_class = CLASS_NAMES[pred_idx]
+    return pred_class, probs
+
+def probs_to_df(probs):
+    return pd.DataFrame({
+        "Class": [DISPLAY_LABELS[c] for c in CLASS_NAMES],
+        "Probability": [float(p) for p in probs]
+    })
+
+def cancer_risk_from_probs(probs):
+    aca_idx = CLASS_NAMES.index("lung_aca")
+    scc_idx = CLASS_NAMES.index("lung_scc")
+    return float(probs[aca_idx] + probs[scc_idx])
+
+def format_pct(x):
+    return f"{x * 100:.2f}%"
+
+# -------------------------
+# UI
+# -------------------------
+st.title("Lung Cancer AI Demo")
+st.caption("Research prototype only. Not for clinical diagnosis or treatment.")
+
+tab1, tab2, tab3 = st.tabs([
+    "Clinical Risk (XGBoost)",
+    "Histology Prediction (New CNN)",
+    "Model Comparison"
+])
+
+# -------------------------
+# Tab 1: XGBoost
+# -------------------------
+with tab1:
+    st.subheader("Clinical Risk Prediction")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        age = st.number_input("Age", min_value=0, max_value=120, value=60)
+        gender = st.selectbox("Gender", [0, 1], format_func=lambda x: "Female" if x == 0 else "Male")
+        smoking = st.selectbox("Smoking", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        finger_discoloration = st.selectbox("Finger Discoloration", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        mental_stress = st.selectbox("Mental Stress", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        exposure_to_pollution = st.selectbox("Exposure to Pollution", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+
+    with c2:
+        long_term_illness = st.selectbox("Long-Term Illness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        energy_level = st.number_input("Energy Level", min_value=0.0, max_value=100.0, value=50.0)
+        immune_weakness = st.selectbox("Immune Weakness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        breathing_issue = st.selectbox("Breathing Issue", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        alcohol_consumption = st.selectbox("Alcohol Consumption", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        throat_discomfort = st.selectbox("Throat Discomfort", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+
+    with c3:
+        oxygen_saturation = st.number_input("Oxygen Saturation", min_value=60.0, max_value=100.0, value=95.0)
+        chest_tightness = st.selectbox("Chest Tightness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        family_history = st.selectbox("Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        smoking_family_history = st.selectbox("Smoking Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        stress_immune = st.selectbox("Stress Immune", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+
+    if st.button("Predict Clinical Risk", type="primary"):
+        patient_inputs = {
+            "AGE": age,
+            "GENDER": gender,
+            "SMOKING": smoking,
+            "FINGER_DISCOLORATION": finger_discoloration,
+            "MENTAL_STRESS": mental_stress,
+            "EXPOSURE_TO_POLLUTION": exposure_to_pollution,
+            "LONG_TERM_ILLNESS": long_term_illness,
+            "ENERGY_LEVEL": energy_level,
+            "IMMUNE_WEAKNESS": immune_weakness,
+            "BREATHING_ISSUE": breathing_issue,
+            "ALCOHOL_CONSUMPTION": alcohol_consumption,
+            "THROAT_DISCOMFORT": throat_discomfort,
+            "OXYGEN_SATURATION": oxygen_saturation,
+            "CHEST_TIGHTNESS": chest_tightness,
+            "FAMILY_HISTORY": family_history,
+            "SMOKING_FAMILY_HISTORY": smoking_family_history,
+            "STRESS_IMMUNE": stress_immune,
+        }
+
+        patient_df = pd.DataFrame([patient_inputs], columns=FEATURE_COLUMNS)
+        prob = float(xgb_model.predict_proba(patient_df)[:, 1][0])
+        flag = prob >= XGB_THRESHOLD
+
+        st.metric("Predicted Risk", format_pct(prob))
+        st.write(f"Flagged above threshold ({XGB_THRESHOLD:.2f}): **{flag}**")
+        st.dataframe(patient_df, use_container_width=True)
+
+# -------------------------
+# Tab 2: New CNN
+# -------------------------
+with tab2:
+    st.subheader("Histopathology Image Prediction")
+    uploaded_file = st.file_uploader(
+        "Upload a histology image",
+        type=["png", "jpg", "jpeg"],
+        key="newcnn"
+    )
+
+    if uploaded_file is not None:
+        image, arr = preprocess_image(uploaded_file)
+        pred_class, probs = predict_cnn(new_cnn, arr)
+        risk = cancer_risk_from_probs(probs)
+
+        left, right = st.columns([1, 1])
+
+        with left:
+            st.image(image, caption="Uploaded image", use_container_width=True)
+
+        with right:
+            st.metric("Predicted Class", DISPLAY_LABELS[pred_class])
+            st.metric("Estimated Cancer Risk", format_pct(risk))
+            st.dataframe(probs_to_df(probs), use_container_width=True)
+
+# -------------------------
+# Tab 3: Compare models
+# -------------------------
+with tab3:
+    st.subheader("Old CNN vs New CNN vs Ensemble")
+    uploaded_file_compare = st.file_uploader(
+        "Upload a histology image",
+        type=["png", "jpg", "jpeg"],
+        key="compare"
+    )
+
+    if uploaded_file_compare is not None:
+        image, arr = preprocess_image(uploaded_file_compare)
+
+        old_pred_class, old_probs = predict_cnn(old_cnn, arr)
+        new_pred_class, new_probs = predict_cnn(new_cnn, arr)
+        ensemble_probs = (old_probs + new_probs) / 2.0
+        ensemble_pred_class = CLASS_NAMES[int(np.argmax(ensemble_probs))]
+
+        st.image(image, caption="Uploaded image", use_container_width=False)
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            st.markdown("### Old CNN")
+            st.write(f"Prediction: **{DISPLAY_LABELS[old_pred_class]}**")
+            st.write(f"Cancer risk: **{format_pct(cancer_risk_from_probs(old_probs))}**")
+            st.dataframe(probs_to_df(old_probs), use_container_width=True)
+
+        with c2:
+            st.markdown("### New CNN")
+            st.write(f"Prediction: **{DISPLAY_LABELS[new_pred_class]}**")
+            st.write(f"Cancer risk: **{format_pct(cancer_risk_from_probs(new_probs))}**")
+            st.dataframe(probs_to_df(new_probs), use_container_width=True)
+
+        with c3:
+            st.markdown("### Ensemble Average")
+            st.write(f"Prediction: **{DISPLAY_LABELS[ensemble_pred_class]}**")
+            st.write(f"Cancer risk: **{format_pct(cancer_risk_from_probs(ensemble_probs))}**")
+            st.dataframe(probs_to_df(ensemble_probs), use_container_width=True)
