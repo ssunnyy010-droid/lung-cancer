@@ -28,7 +28,6 @@ DISPLAY_LABELS = {
     "lung_scc": "Squamous Cell Carcinoma",
 }
 
-# Change this if your chosen threshold was different
 XGB_THRESHOLD = 0.50
 
 FEATURE_COLUMNS = [
@@ -77,6 +76,28 @@ xgb_model = load_xgb()
 old_cnn = load_old_cnn()
 new_cnn = load_new_cnn()
 cv_results = load_cv_results()
+
+# -------------------------
+# Session state
+# -------------------------
+if "last_xgb_prob" not in st.session_state:
+    st.session_state.last_xgb_prob = None
+if "last_xgb_flag" not in st.session_state:
+    st.session_state.last_xgb_flag = None
+if "last_xgb_inputs" not in st.session_state:
+    st.session_state.last_xgb_inputs = None
+
+if "last_new_probs" not in st.session_state:
+    st.session_state.last_new_probs = None
+if "last_new_pred_class" not in st.session_state:
+    st.session_state.last_new_pred_class = None
+
+if "last_compare_old_probs" not in st.session_state:
+    st.session_state.last_compare_old_probs = None
+if "last_compare_new_probs" not in st.session_state:
+    st.session_state.last_compare_new_probs = None
+if "last_compare_ensemble_probs" not in st.session_state:
+    st.session_state.last_compare_ensemble_probs = None
 
 # -------------------------
 # Helpers
@@ -151,6 +172,28 @@ def plot_model_comparison(old_probs, new_probs, ensemble_probs):
     ax.legend()
     return fig
 
+def plot_xgb_risk(prob, threshold):
+    fig, ax = plt.subplots(figsize=(6, 1.8))
+    ax.barh(["Risk"], [prob], color="tab:red")
+    ax.axvline(threshold, linestyle="--", color="black", label=f"Threshold = {threshold:.2f}")
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("Probability")
+    ax.set_title("Clinical Risk Score")
+    ax.legend()
+    return fig
+
+def plot_xgb_pie(prob):
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.pie(
+        [prob, 1 - prob],
+        labels=["Cancer Risk", "Non-Cancer"],
+        autopct="%1.1f%%",
+        startangle=90
+    )
+    ax.set_title("XGBoost Risk Distribution")
+    ax.axis("equal")
+    return fig
+
 # -------------------------
 # UI
 # -------------------------
@@ -220,6 +263,10 @@ with tab1:
         prob = float(xgb_model.predict_proba(patient_df)[:, 1][0])
         flag = prob >= XGB_THRESHOLD
 
+        st.session_state.last_xgb_prob = prob
+        st.session_state.last_xgb_flag = flag
+        st.session_state.last_xgb_inputs = patient_df
+
         st.metric("Predicted Risk", format_pct(prob))
         st.write(f"Flagged above threshold ({XGB_THRESHOLD:.2f}): **{flag}**")
         st.dataframe(patient_df, use_container_width=True)
@@ -239,6 +286,9 @@ with tab2:
         image, arr = preprocess_image(uploaded_file)
         pred_class, probs = predict_cnn(new_cnn, arr)
         risk = cancer_risk_from_probs(probs)
+
+        st.session_state.last_new_probs = probs
+        st.session_state.last_new_pred_class = pred_class
 
         left, right = st.columns([1, 1])
 
@@ -269,6 +319,10 @@ with tab3:
         ensemble_probs = (old_probs + new_probs) / 2.0
         ensemble_pred_class = CLASS_NAMES[int(np.argmax(ensemble_probs))]
 
+        st.session_state.last_compare_old_probs = old_probs
+        st.session_state.last_compare_new_probs = new_probs
+        st.session_state.last_compare_ensemble_probs = ensemble_probs
+
         st.image(image, caption="Uploaded image", use_container_width=False)
 
         c1, c2, c3 = st.columns(3)
@@ -297,7 +351,54 @@ with tab3:
 with tab4:
     st.subheader("Data Analysis")
 
-    st.markdown("### 10-Fold Cross-Validation Results")
+    st.markdown("## 1. XGBoost Clinical Dataset Analysis")
+    if st.session_state.last_xgb_prob is not None:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.pyplot(plot_xgb_risk(st.session_state.last_xgb_prob, XGB_THRESHOLD))
+        with c2:
+            st.pyplot(plot_xgb_pie(st.session_state.last_xgb_prob))
+
+        st.write(f"Flag above threshold: **{st.session_state.last_xgb_flag}**")
+        st.dataframe(st.session_state.last_xgb_inputs, use_container_width=True)
+    else:
+        st.info("Run a prediction in the Clinical Risk tab to see XGBoost analysis.")
+
+    st.markdown("## 2. New CNN Dataset Analysis")
+    if st.session_state.last_new_probs is not None:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.pyplot(plot_prob_bar(st.session_state.last_new_probs, title="New CNN Class Probabilities"))
+        with c2:
+            st.pyplot(plot_prob_pie(st.session_state.last_new_probs, title="New CNN Prediction Distribution"))
+    else:
+        st.info("Run a prediction in the Histology Prediction tab to see new CNN analysis.")
+
+    st.markdown("## 3. Old vs New CNN Dataset Comparison")
+    if (
+        st.session_state.last_compare_old_probs is not None
+        and st.session_state.last_compare_new_probs is not None
+        and st.session_state.last_compare_ensemble_probs is not None
+    ):
+        st.pyplot(
+            plot_model_comparison(
+                st.session_state.last_compare_old_probs,
+                st.session_state.last_compare_new_probs,
+                st.session_state.last_compare_ensemble_probs
+            )
+        )
+
+        comparison_df = pd.DataFrame({
+            "Class": [DISPLAY_LABELS[c] for c in CLASS_NAMES],
+            "Old CNN": st.session_state.last_compare_old_probs,
+            "New CNN": st.session_state.last_compare_new_probs,
+            "Ensemble": st.session_state.last_compare_ensemble_probs
+        })
+        st.dataframe(comparison_df, use_container_width=True)
+    else:
+        st.info("Run a prediction in the Model Comparison tab to see old/new/ensemble analysis.")
+
+    st.markdown("## 4. 10-Fold Cross-Validation Summary")
     if cv_results is not None:
         st.dataframe(cv_results, use_container_width=True)
 
@@ -305,14 +406,14 @@ with tab4:
 
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("#### Mean Metrics")
+            st.markdown("### Mean Metrics")
             st.dataframe(
                 cv_results[metric_cols].mean().to_frame(name="Mean"),
                 use_container_width=True
             )
 
         with c2:
-            st.markdown("#### Standard Deviation")
+            st.markdown("### Standard Deviation")
             st.dataframe(
                 cv_results[metric_cols].std().to_frame(name="Std"),
                 use_container_width=True
@@ -320,46 +421,8 @@ with tab4:
 
         c3, c4 = st.columns(2)
         with c3:
-            st.markdown("#### Fold Accuracy")
             st.pyplot(plot_fold_metric(cv_results, "accuracy", "Fold Accuracy", "Accuracy"))
-
         with c4:
-            st.markdown("#### Fold AUC")
             st.pyplot(plot_fold_metric(cv_results, "auc_ovr_macro", "Fold AUC", "AUC"))
     else:
         st.warning("Could not load lung_10fold_cv_results.csv")
-
-    st.markdown("### Prediction Distribution Analysis")
-    uploaded_file_analysis = st.file_uploader(
-        "Upload a histology image for analysis",
-        type=["png", "jpg", "jpeg"],
-        key="analysis"
-    )
-
-    if uploaded_file_analysis is not None:
-        image, arr = preprocess_image(uploaded_file_analysis)
-        old_pred_class, old_probs = predict_cnn(old_cnn, arr)
-        new_pred_class, new_probs = predict_cnn(new_cnn, arr)
-        ensemble_probs = (old_probs + new_probs) / 2.0
-
-        st.image(image, caption="Uploaded image", use_container_width=False)
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("#### New CNN Probability Bar Chart")
-            st.pyplot(plot_prob_bar(new_probs, title="New CNN Class Probabilities"))
-
-        with c2:
-            st.markdown("#### New CNN Probability Pie Chart")
-            st.pyplot(plot_prob_pie(new_probs, title="New CNN Prediction Distribution"))
-
-        st.markdown("#### Old vs New vs Ensemble Comparison")
-        st.pyplot(plot_model_comparison(old_probs, new_probs, ensemble_probs))
-
-        comparison_df = pd.DataFrame({
-            "Class": [DISPLAY_LABELS[c] for c in CLASS_NAMES],
-            "Old CNN": old_probs,
-            "New CNN": new_probs,
-            "Ensemble": ensemble_probs
-        })
-        st.dataframe(comparison_df, use_container_width=True)
