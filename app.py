@@ -78,7 +78,7 @@ new_cnn = load_new_cnn()
 cv_results = load_cv_results()
 
 # -------------------------
-# Session state
+# Session state for analysis
 # -------------------------
 if "last_xgb_prob" not in st.session_state:
     st.session_state.last_xgb_prob = None
@@ -173,9 +173,9 @@ def plot_model_comparison(old_probs, new_probs, ensemble_probs):
     return fig
 
 def plot_xgb_risk(prob, threshold):
-    fig, ax = plt.subplots(figsize=(6, 1.8))
-    ax.barh(["Risk"], [prob], color="tab:red")
-    ax.axvline(threshold, linestyle="--", color="black", label=f"Threshold = {threshold:.2f}")
+    fig, ax = plt.subplots(figsize=(6, 2))
+    ax.barh(["Risk"], [prob])
+    ax.axvline(threshold, linestyle="--", color="red", label=f"Threshold = {threshold:.2f}")
     ax.set_xlim(0, 1)
     ax.set_xlabel("Probability")
     ax.set_title("Clinical Risk Score")
@@ -352,6 +352,7 @@ with tab4:
     st.subheader("Data Analysis")
 
     st.markdown("## 1. XGBoost Clinical Dataset Analysis")
+    st.write("This section analyzes the structured clinical input model.")
     if st.session_state.last_xgb_prob is not None:
         c1, c2 = st.columns(2)
         with c1:
@@ -365,21 +366,37 @@ with tab4:
         st.info("Run a prediction in the Clinical Risk tab to see XGBoost analysis.")
 
     st.markdown("## 2. New CNN Dataset Analysis")
+    st.write("This section analyzes probability outputs from the improved CNN image model.")
     if st.session_state.last_new_probs is not None:
         c1, c2 = st.columns(2)
         with c1:
             st.pyplot(plot_prob_bar(st.session_state.last_new_probs, title="New CNN Class Probabilities"))
         with c2:
-            st.pyplot(plot_prob_pie(st.session_state.last_new_probs, title="New CNN Prediction Distribution"))
+            st.pyplot(plot_prob_pie(st.session_state.last_new_probs, title="New CNN Probability Distribution"))
+
+        st.write(
+            "Probability Distribution: The system produces predictions in the form of a "
+            "probability distribution displayed in a pie chart, providing insights into "
+            "the likelihood of different cancer types based on the input image."
+        )
     else:
         st.info("Run a prediction in the Histology Prediction tab to see new CNN analysis.")
 
     st.markdown("## 3. Old vs New CNN Dataset Comparison")
+    st.write("This section compares outputs from the baseline CNN, improved CNN, and ensemble.")
     if (
         st.session_state.last_compare_old_probs is not None
         and st.session_state.last_compare_new_probs is not None
         and st.session_state.last_compare_ensemble_probs is not None
     ):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.pyplot(plot_prob_pie(st.session_state.last_compare_old_probs, title="Old CNN Distribution"))
+        with c2:
+            st.pyplot(plot_prob_pie(st.session_state.last_compare_new_probs, title="New CNN Distribution"))
+        with c3:
+            st.pyplot(plot_prob_pie(st.session_state.last_compare_ensemble_probs, title="Ensemble Distribution"))
+
         st.pyplot(
             plot_model_comparison(
                 st.session_state.last_compare_old_probs,
@@ -399,6 +416,7 @@ with tab4:
         st.info("Run a prediction in the Model Comparison tab to see old/new/ensemble analysis.")
 
     st.markdown("## 4. 10-Fold Cross-Validation Summary")
+    st.write("This section summarizes performance on the improved validation dataset.")
     if cv_results is not None:
         st.dataframe(cv_results, use_container_width=True)
 
