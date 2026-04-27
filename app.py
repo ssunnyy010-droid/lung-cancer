@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 import tensorflow as tf
 from PIL import Image
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Lung Cancer AI Demo", layout="wide")
 
@@ -13,6 +14,7 @@ st.set_page_config(page_title="Lung Cancer AI Demo", layout="wide")
 XGB_PATH = "models/lung_cancer_calibrated_pipeline.joblib"
 OLD_CNN_PATH = "models/lung_histology_old_cnn.keras"
 NEW_CNN_PATH = "models/lung_histology_cnn.keras"
+CV_RESULTS_PATH = "lung_10fold_cv_results.csv"
 
 # -------------------------
 # Constants
@@ -26,7 +28,6 @@ DISPLAY_LABELS = {
     "lung_scc": "Squamous Cell Carcinoma",
 }
 
-# Change this if your chosen threshold was different
 XGB_THRESHOLD = 0.50
 
 FEATURE_COLUMNS = [
@@ -64,9 +65,17 @@ def load_old_cnn():
 def load_new_cnn():
     return tf.keras.models.load_model(NEW_CNN_PATH)
 
+@st.cache_data
+def load_cv_results():
+    try:
+        return pd.read_csv(CV_RESULTS_PATH)
+    except Exception:
+        return None
+
 xgb_model = load_xgb()
 old_cnn = load_old_cnn()
 new_cnn = load_new_cnn()
+cv_results = load_cv_results()
 
 # -------------------------
 # Helpers
@@ -98,16 +107,60 @@ def cancer_risk_from_probs(probs):
 def format_pct(x):
     return f"{x * 100:.2f}%"
 
+def plot_prob_bar(probs, title="Class Probabilities"):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    labels = [DISPLAY_LABELS[c] for c in CLASS_NAMES]
+    ax.bar(labels, probs)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Probability")
+    ax.set_title(title)
+    plt.xticks(rotation=10)
+    return fig
+
+def plot_prob_pie(probs, title="Prediction Distribution"):
+    fig, ax = plt.subplots(figsize=(5, 5))
+    labels = [DISPLAY_LABELS[c] for c in CLASS_NAMES]
+    ax.pie(probs, labels=labels, autopct="%1.1f%%", startangle=90)
+    ax.set_title(title)
+    ax.axis("equal")
+    return fig
+
+def plot_fold_metric(results_df, metric_col, title, ylabel):
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.bar(results_df["fold"].astype(str), results_df[metric_col])
+    ax.set_title(title)
+    ax.set_xlabel("Fold")
+    ax.set_ylabel(ylabel)
+    return fig
+
+def plot_model_comparison(old_probs, new_probs, ensemble_probs):
+    fig, ax = plt.subplots(figsize=(8, 4))
+    x = np.arange(len(CLASS_NAMES))
+    width = 0.25
+
+    ax.bar(x - width, old_probs, width, label="Old CNN")
+    ax.bar(x, new_probs, width, label="New CNN")
+    ax.bar(x + width, ensemble_probs, width, label="Ensemble")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([DISPLAY_LABELS[c] for c in CLASS_NAMES], rotation=10)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Probability")
+    ax.set_title("Model Comparison by Class")
+    ax.legend()
+    return fig
+
 # -------------------------
 # UI
 # -------------------------
 st.title("Lung Cancer AI Demo")
 st.caption("Research prototype only. Not for clinical diagnosis or treatment.")
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "Clinical Risk (XGBoost)",
     "Histology Prediction (New CNN)",
-    "Model Comparison"
+    "Model Comparison",
+    "Data Analysis"
 ])
 
 # -------------------------
@@ -236,3 +289,79 @@ with tab3:
             st.write(f"Prediction: **{DISPLAY_LABELS[ensemble_pred_class]}**")
             st.write(f"Cancer risk: **{format_pct(cancer_risk_from_probs(ensemble_probs))}**")
             st.dataframe(probs_to_df(ensemble_probs), use_container_width=True)
+
+# -------------------------
+# Tab 4: Data Analysis
+# -------------------------
+with tab4:
+    st.subheader("Data Analysis")
+
+    # ---- Cross-validation results ----
+    st.markdown("### 10-Fold Cross-Validation Summary")
+
+    if cv_results is not None:
+        st.dataframe(cv_results, use_container_width=True)
+
+        mean_metrics = cv_results[["accuracy", "macro_f1", "weighted_f1", "auc_ovr_macro"]].mean().to_frame("Mean")
+        std_metrics = cv_results[["accuracy", "macro_f1", "weighted_f1", "auc_ovr_macro"]].std().to_frame("Std")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Mean Metrics")
+            st.dataframe(mean_metrics, use_container_width=True)
+
+        with c2:
+            st.markdown("#### Standard Deviation")
+            st.dataframe(std_metrics, use_container_width=True)
+
+        c3, c4 = st.columns(2)
+        with c3:
+            fig_acc = plot_fold_metric(cv_results, "accuracy", "Fold Accuracy", "Accuracy")
+            st.pyplot(fig_acc)
+
+        with c4:
+            fig_auc = plot_fold_metric(cv_results, "auc_ovr_macro", "Fold AUC", "AUC")
+            st.pyplot(fig_auc)
+    else:
+        st.warning("Could not load lung_10fold_cv_results.csv")
+
+    # ---- Prediction visualization ----
+    st.markdown("### Prediction Visualization")
+
+    uploaded_file_analysis = st.file_uploader(
+        "Upload an image for probability analysis",
+        type=["png", "jpg", "jpeg"],
+        key="analysis"
+    )
+
+    if uploaded_file_analysis is not None:
+        image, arr = preprocess_image(uploaded_file_analysis)
+
+        old_pred_class, old_probs = predict_cnn(old_cnn, arr)
+        new_pred_class, new_probs = predict_cnn(new_cnn, arr)
+        ensemble_probs = (old_probs + new_probs) / 2.0
+
+        st.image(image, caption="Uploaded image", use_container_width=False)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### New CNN Probability Bar Chart")
+            fig_bar = plot_prob_bar(new_probs, title="New CNN Class Probabilities")
+            st.pyplot(fig_bar)
+
+        with c2:
+            st.markdown("#### New CNN Probability Pie Chart")
+            fig_pie = plot_prob_pie(new_probs, title="New CNN Prediction Distribution")
+            st.pyplot(fig_pie)
+
+        st.markdown("#### Old vs New vs Ensemble")
+        fig_compare = plot_model_comparison(old_probs, new_probs, ensemble_probs)
+        st.pyplot(fig_compare)
+
+        comparison_df = pd.DataFrame({
+            "Class": [DISPLAY_LABELS[c] for c in CLASS_NAMES],
+            "Old CNN": old_probs,
+            "New CNN": new_probs,
+            "Ensemble": ensemble_probs
+        })
+        st.dataframe(comparison_df, use_container_width=True)
