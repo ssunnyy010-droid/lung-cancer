@@ -194,17 +194,47 @@ def plot_xgb_pie(prob):
     ax.axis("equal")
     return fig
 
+def plot_combined_scores(clinical_score, image_score, combined_score):
+    labels = []
+    values = []
+
+    if clinical_score is not None:
+        labels.append("Clinical")
+        values.append(clinical_score)
+
+    if image_score is not None:
+        labels.append("Image")
+        values.append(image_score)
+
+    labels.append("Combined")
+    values.append(combined_score)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.bar(labels, values)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Risk Score")
+    ax.set_title("Combined Risk Components")
+    return fig
+
+def confidence_label(prob):
+    if prob >= 0.85:
+        return "High"
+    if prob >= 0.60:
+        return "Moderate"
+    return "Low"
+
 # -------------------------
 # UI
 # -------------------------
 st.title("Lung Cancer AI Demo")
 st.caption("Research prototype only. Not for clinical diagnosis or treatment.")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Clinical Risk (XGBoost)",
     "Histology Prediction (New CNN)",
     "Model Comparison",
-    "Data Analysis"
+    "Data Analysis",
+    "Combined Risk (Clinical + Image)"
 ])
 
 # -------------------------
@@ -216,27 +246,27 @@ with tab1:
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        age = st.number_input("Age", min_value=0, max_value=120, value=60)
-        gender = st.selectbox("Gender", [0, 1], format_func=lambda x: "Female" if x == 0 else "Male")
-        smoking = st.selectbox("Smoking", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        finger_discoloration = st.selectbox("Finger Discoloration", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        mental_stress = st.selectbox("Mental Stress", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        exposure_to_pollution = st.selectbox("Exposure to Pollution", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        age = st.number_input("Age", min_value=0, max_value=120, value=60, key="t1_age")
+        gender = st.selectbox("Gender", [0, 1], format_func=lambda x: "Female" if x == 0 else "Male", key="t1_gender")
+        smoking = st.selectbox("Smoking", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_smoking")
+        finger_discoloration = st.selectbox("Finger Discoloration", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_finger")
+        mental_stress = st.selectbox("Mental Stress", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_stress")
+        exposure_to_pollution = st.selectbox("Exposure to Pollution", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_pollution")
 
     with c2:
-        long_term_illness = st.selectbox("Long-Term Illness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        energy_level = st.number_input("Energy Level", min_value=0.0, max_value=100.0, value=50.0)
-        immune_weakness = st.selectbox("Immune Weakness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        breathing_issue = st.selectbox("Breathing Issue", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        alcohol_consumption = st.selectbox("Alcohol Consumption", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        throat_discomfort = st.selectbox("Throat Discomfort", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        long_term_illness = st.selectbox("Long-Term Illness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_long")
+        energy_level = st.number_input("Energy Level", min_value=0.0, max_value=100.0, value=50.0, key="t1_energy")
+        immune_weakness = st.selectbox("Immune Weakness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_immune")
+        breathing_issue = st.selectbox("Breathing Issue", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_breath")
+        alcohol_consumption = st.selectbox("Alcohol Consumption", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_alcohol")
+        throat_discomfort = st.selectbox("Throat Discomfort", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_throat")
 
     with c3:
-        oxygen_saturation = st.number_input("Oxygen Saturation", min_value=60.0, max_value=100.0, value=95.0)
-        chest_tightness = st.selectbox("Chest Tightness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        family_history = st.selectbox("Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        smoking_family_history = st.selectbox("Smoking Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
-        stress_immune = st.selectbox("Stress Immune", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes")
+        oxygen_saturation = st.number_input("Oxygen Saturation", min_value=60.0, max_value=100.0, value=95.0, key="t1_oxygen")
+        chest_tightness = st.selectbox("Chest Tightness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_chest")
+        family_history = st.selectbox("Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_family")
+        smoking_family_history = st.selectbox("Smoking Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_smoke_family")
+        stress_immune = st.selectbox("Stress Immune", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="t1_stress_immune")
 
     if st.button("Predict Clinical Risk", type="primary"):
         patient_inputs = {
@@ -269,6 +299,7 @@ with tab1:
 
         st.metric("Predicted Risk", format_pct(prob))
         st.write(f"Flagged above threshold ({XGB_THRESHOLD:.2f}): **{flag}**")
+        st.write(f"Confidence Level: **{confidence_label(prob)}**")
         st.dataframe(patient_df, use_container_width=True)
 
 # -------------------------
@@ -298,6 +329,7 @@ with tab2:
         with right:
             st.metric("Predicted Class", DISPLAY_LABELS[pred_class])
             st.metric("Estimated Cancer Risk", format_pct(risk))
+            st.write(f"Confidence Level: **{confidence_label(np.max(probs))}**")
             st.dataframe(probs_to_df(probs), use_container_width=True)
 
 # -------------------------
@@ -324,6 +356,10 @@ with tab3:
         st.session_state.last_compare_ensemble_probs = ensemble_probs
 
         st.image(image, caption="Uploaded image", use_container_width=False)
+
+        agreement = (old_pred_class == new_pred_class == ensemble_pred_class)
+
+        st.write(f"Model Agreement: **{'Strong' if agreement else 'Mixed'}**")
 
         c1, c2, c3 = st.columns(3)
 
@@ -444,3 +480,153 @@ with tab4:
             st.pyplot(plot_fold_metric(cv_results, "auc_ovr_macro", "Fold AUC", "AUC"))
     else:
         st.warning("Could not load lung_10fold_cv_results.csv")
+
+# -------------------------
+# Tab 5: Combined Risk
+# -------------------------
+with tab5:
+    st.subheader("Combined Risk (Clinical + Image)")
+    st.write("This page combines patient attributes and histology image analysis into a single risk assessment. It also works if only one input type is provided.")
+
+    st.markdown("### Patient Attributes")
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        c_age = st.number_input("Age", min_value=0, max_value=120, value=60, key="c_age")
+        c_gender = st.selectbox("Gender", [0, 1], format_func=lambda x: "Female" if x == 0 else "Male", key="c_gender")
+        c_smoking = st.selectbox("Smoking", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_smoking")
+        c_finger = st.selectbox("Finger Discoloration", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_finger")
+        c_stress = st.selectbox("Mental Stress", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_stress")
+        c_pollution = st.selectbox("Exposure to Pollution", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_pollution")
+
+    with c2:
+        c_long = st.selectbox("Long-Term Illness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_long")
+        c_energy = st.number_input("Energy Level", min_value=0.0, max_value=100.0, value=50.0, key="c_energy")
+        c_immune = st.selectbox("Immune Weakness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_immune")
+        c_breath = st.selectbox("Breathing Issue", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_breath")
+        c_alcohol = st.selectbox("Alcohol Consumption", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_alcohol")
+        c_throat = st.selectbox("Throat Discomfort", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_throat")
+
+    with c3:
+        c_oxygen = st.number_input("Oxygen Saturation", min_value=60.0, max_value=100.0, value=95.0, key="c_oxygen")
+        c_chest = st.selectbox("Chest Tightness", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_chest")
+        c_family = st.selectbox("Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_family")
+        c_smoke_family = st.selectbox("Smoking Family History", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_smoke_family")
+        c_stress_immune = st.selectbox("Stress Immune", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", key="c_stress_immune")
+
+    use_clinical = st.checkbox("Use patient attributes", value=True, key="use_clinical")
+
+    st.markdown("### Histology Image")
+    combined_uploaded_file = st.file_uploader(
+        "Upload a histology image (optional)",
+        type=["png", "jpg", "jpeg"],
+        key="combined_image"
+    )
+    use_image = st.checkbox("Use image in combined score", value=True, key="use_image")
+
+    if st.button("Calculate Combined Risk", type="primary"):
+        clinical_score = None
+        image_score = None
+        combined_score = None
+
+        # Clinical score
+        if use_clinical:
+            patient_inputs = {
+                "AGE": c_age,
+                "GENDER": c_gender,
+                "SMOKING": c_smoking,
+                "FINGER_DISCOLORATION": c_finger,
+                "MENTAL_STRESS": c_stress,
+                "EXPOSURE_TO_POLLUTION": c_pollution,
+                "LONG_TERM_ILLNESS": c_long,
+                "ENERGY_LEVEL": c_energy,
+                "IMMUNE_WEAKNESS": c_immune,
+                "BREATHING_ISSUE": c_breath,
+                "ALCOHOL_CONSUMPTION": c_alcohol,
+                "THROAT_DISCOMFORT": c_throat,
+                "OXYGEN_SATURATION": c_oxygen,
+                "CHEST_TIGHTNESS": c_chest,
+                "FAMILY_HISTORY": c_family,
+                "SMOKING_FAMILY_HISTORY": c_smoke_family,
+                "STRESS_IMMUNE": c_stress_immune,
+            }
+            patient_df = pd.DataFrame([patient_inputs], columns=FEATURE_COLUMNS)
+            clinical_score = float(xgb_model.predict_proba(patient_df)[:, 1][0])
+
+        # Image score from average of old + new CNN
+        if use_image and combined_uploaded_file is not None:
+            image, arr = preprocess_image(combined_uploaded_file)
+
+            old_pred_class, old_probs = predict_cnn(old_cnn, arr)
+            new_pred_class, new_probs = predict_cnn(new_cnn, arr)
+            ensemble_probs = (old_probs + new_probs) / 2.0
+            ensemble_pred_class = CLASS_NAMES[int(np.argmax(ensemble_probs))]
+            image_score = cancer_risk_from_probs(ensemble_probs)
+
+        # Combined logic
+        available_scores = [s for s in [clinical_score, image_score] if s is not None]
+        if len(available_scores) > 0:
+            combined_score = float(np.mean(available_scores))
+
+        # Output
+        if combined_score is None:
+            st.error("No valid inputs selected. Use patient attributes, upload an image, or both.")
+        else:
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                if clinical_score is not None:
+                    st.metric("Clinical Score", format_pct(clinical_score))
+                else:
+                    st.metric("Clinical Score", "Not Used")
+
+            with c2:
+                if image_score is not None:
+                    st.metric("Image Score (Avg of 2 CNNs)", format_pct(image_score))
+                else:
+                    st.metric("Image Score", "Not Used")
+
+            with c3:
+                st.metric("Combined Risk Score", format_pct(combined_score))
+
+            st.write(f"Combined Confidence Level: **{confidence_label(combined_score)}**")
+            st.write(f"Flagged above threshold ({XGB_THRESHOLD:.2f}): **{combined_score >= XGB_THRESHOLD}**")
+
+            st.pyplot(plot_combined_scores(clinical_score, image_score, combined_score))
+
+            if clinical_score is not None and image_score is not None:
+                st.write("Combination mode: **Clinical + Image average**")
+            elif clinical_score is not None:
+                st.write("Combination mode: **Clinical only**")
+            elif image_score is not None:
+                st.write("Combination mode: **Image only**")
+
+            if use_clinical and clinical_score is not None:
+                with st.expander("Show patient attributes used"):
+                    st.dataframe(patient_df, use_container_width=True)
+
+            if use_image and combined_uploaded_file is not None and image_score is not None:
+                st.markdown("### Image-Based Analysis")
+                st.image(image, caption="Uploaded image", use_container_width=False)
+
+                c4, c5, c6 = st.columns(3)
+                with c4:
+                    st.markdown("#### Old CNN")
+                    st.write(f"Prediction: **{DISPLAY_LABELS[old_pred_class]}**")
+                    st.dataframe(probs_to_df(old_probs), use_container_width=True)
+
+                with c5:
+                    st.markdown("#### New CNN")
+                    st.write(f"Prediction: **{DISPLAY_LABELS[new_pred_class]}**")
+                    st.dataframe(probs_to_df(new_probs), use_container_width=True)
+
+                with c6:
+                    st.markdown("#### Ensemble Image Output")
+                    st.write(f"Prediction: **{DISPLAY_LABELS[ensemble_pred_class]}**")
+                    st.dataframe(probs_to_df(ensemble_probs), use_container_width=True)
+
+                c7, c8 = st.columns(2)
+                with c7:
+                    st.pyplot(plot_prob_bar(ensemble_probs, title="Ensemble Class Probabilities"))
+                with c8:
+                    st.pyplot(plot_prob_pie(ensemble_probs, title="Ensemble Probability Distribution"))
