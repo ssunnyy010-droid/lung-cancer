@@ -31,7 +31,7 @@ DISPLAY_LABELS = {
 }
 
 # IMPORTANT:
-# Change this only if your Colab class_names order was different.
+# Match this to the exact class_names order printed in Colab
 CT_CLASS_NAMES = ["benign", "malignant", "normal"]
 CT_DISPLAY_LABELS = {
     "benign": "Benign",
@@ -70,15 +70,15 @@ def load_xgb():
 
 @st.cache_resource
 def load_old_cnn():
-    return tf.keras.models.load_model(OLD_CNN_PATH)
+    return tf.keras.models.load_model(OLD_CNN_PATH, compile=False)
 
 @st.cache_resource
 def load_new_cnn():
-    return tf.keras.models.load_model(NEW_CNN_PATH)
+    return tf.keras.models.load_model(NEW_CNN_PATH, compile=False)
 
 @st.cache_resource
 def load_ct_cnn():
-    return tf.keras.models.load_model(CT_MODEL_PATH)
+    return tf.keras.models.load_model(CT_MODEL_PATH, compile=False)
 
 @st.cache_data
 def load_cv_results():
@@ -650,7 +650,6 @@ with tab6:
         ct_score = None
         combined_score = None
 
-        # Clinical
         if use_clinical:
             patient_inputs = {
                 "AGE": c_age,
@@ -674,7 +673,6 @@ with tab6:
             patient_df = pd.DataFrame([patient_inputs], columns=FEATURE_COLUMNS)
             clinical_score = float(xgb_model.predict_proba(patient_df)[:, 1][0])
 
-        # Histology
         if use_histology and combined_histology_file is not None:
             hist_image, hist_arr = preprocess_histology_image(combined_histology_file)
             old_pred_class, old_probs = predict_cnn(old_cnn, hist_arr)
@@ -683,7 +681,6 @@ with tab6:
             hist_ensemble_pred_class = CLASS_NAMES[int(np.argmax(hist_ensemble_probs))]
             histology_score = cancer_risk_from_probs(hist_ensemble_probs)
 
-        # CT
         if use_ct and combined_ct_file is not None:
             ct_image, ct_arr = preprocess_ct_image(combined_ct_file)
             ct_pred_class, ct_probs = predict_ct(ct_cnn, ct_arr)
