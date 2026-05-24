@@ -31,7 +31,7 @@ DISPLAY_LABELS = {
 }
 
 # IMPORTANT:
-# Match this to the exact class_names order printed in Colab
+# Change this only if your Colab class_names order was different.
 CT_CLASS_NAMES = ["benign", "malignant", "normal"]
 CT_DISPLAY_LABELS = {
     "benign": "Benign",
@@ -90,7 +90,6 @@ def load_cv_results():
 xgb_model = load_xgb()
 old_cnn = load_old_cnn()
 new_cnn = load_new_cnn()
-ct_cnn = load_ct_cnn()
 cv_results = load_cv_results()
 
 # -------------------------
@@ -459,30 +458,35 @@ with tab4:
     )
 
     if ct_uploaded_file is not None:
-        ct_image, ct_arr = preprocess_ct_image(ct_uploaded_file)
-        ct_pred_class, ct_probs = predict_ct(ct_cnn, ct_arr)
-        ct_risk = ct_cancer_risk_from_probs(ct_probs)
+        try:
+            ct_cnn = load_ct_cnn()
+            ct_image, ct_arr = preprocess_ct_image(ct_uploaded_file)
+            ct_pred_class, ct_probs = predict_ct(ct_cnn, ct_arr)
+            ct_risk = ct_cancer_risk_from_probs(ct_probs)
 
-        st.session_state.last_ct_probs = ct_probs
-        st.session_state.last_ct_pred_class = ct_pred_class
-        st.session_state.last_ct_cancer_risk = ct_risk
+            st.session_state.last_ct_probs = ct_probs
+            st.session_state.last_ct_pred_class = ct_pred_class
+            st.session_state.last_ct_cancer_risk = ct_risk
 
-        c1, c2 = st.columns([1, 1])
+            c1, c2 = st.columns([1, 1])
 
-        with c1:
-            st.image(ct_image, caption="Uploaded CT scan", use_container_width=True)
+            with c1:
+                st.image(ct_image, caption="Uploaded CT scan", use_container_width=True)
 
-        with c2:
-            st.metric("Predicted CT Class", CT_DISPLAY_LABELS[ct_pred_class])
-            st.metric("CT Cancer Risk", format_pct(ct_risk))
-            st.write(f"Confidence Level: **{confidence_label(np.max(ct_probs))}**")
-            st.dataframe(ct_probs_to_df(ct_probs), use_container_width=True)
+            with c2:
+                st.metric("Predicted CT Class", CT_DISPLAY_LABELS[ct_pred_class])
+                st.metric("CT Cancer Risk", format_pct(ct_risk))
+                st.write(f"Confidence Level: **{confidence_label(np.max(ct_probs))}**")
+                st.dataframe(ct_probs_to_df(ct_probs), use_container_width=True)
 
-        c3, c4 = st.columns(2)
-        with c3:
-            st.pyplot(plot_ct_prob_bar(ct_probs, title="CT Class Probabilities"))
-        with c4:
-            st.pyplot(plot_ct_prob_pie(ct_probs, title="CT Probability Distribution"))
+            c3, c4 = st.columns(2)
+            with c3:
+                st.pyplot(plot_ct_prob_bar(ct_probs, title="CT Class Probabilities"))
+            with c4:
+                st.pyplot(plot_ct_prob_pie(ct_probs, title="CT Probability Distribution"))
+
+        except Exception as e:
+            st.error(f"CT model could not be loaded or used: {e}")
 
 # -------------------------
 # Tab 5: Data Analysis
@@ -682,9 +686,14 @@ with tab6:
             histology_score = cancer_risk_from_probs(hist_ensemble_probs)
 
         if use_ct and combined_ct_file is not None:
-            ct_image, ct_arr = preprocess_ct_image(combined_ct_file)
-            ct_pred_class, ct_probs = predict_ct(ct_cnn, ct_arr)
-            ct_score = ct_cancer_risk_from_probs(ct_probs)
+            try:
+                ct_cnn = load_ct_cnn()
+                ct_image, ct_arr = preprocess_ct_image(combined_ct_file)
+                ct_pred_class, ct_probs = predict_ct(ct_cnn, ct_arr)
+                ct_score = ct_cancer_risk_from_probs(ct_probs)
+            except Exception as e:
+                st.warning(f"CT model unavailable: {e}")
+                ct_score = None
 
         available_scores = [s for s in [clinical_score, histology_score, ct_score] if s is not None]
         if len(available_scores) > 0:
