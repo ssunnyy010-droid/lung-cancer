@@ -30,11 +30,9 @@ DISPLAY_LABELS = {
     "lung_scc": "Squamous Cell Carcinoma",
 }
 
-# IMPORTANT:
-# Change this only if your Colab class_names order was different.
-CT_CLASS_NAMES = ["benign", "malignant", "normal"]
+# CT model classes from your actual Colab output
+CT_CLASS_NAMES = ["malignant", "normal"]
 CT_DISPLAY_LABELS = {
-    "benign": "Benign",
     "malignant": "Malignant",
     "normal": "Normal",
 }
@@ -99,14 +97,11 @@ session_defaults = {
     "last_xgb_prob": None,
     "last_xgb_flag": None,
     "last_xgb_inputs": None,
-
     "last_new_probs": None,
     "last_new_pred_class": None,
-
     "last_compare_old_probs": None,
     "last_compare_new_probs": None,
     "last_compare_ensemble_probs": None,
-
     "last_ct_probs": None,
     "last_ct_pred_class": None,
     "last_ct_cancer_risk": None,
@@ -152,8 +147,9 @@ def probs_to_df(probs):
     })
 
 def ct_probs_to_df(probs):
+    labels = CT_CLASS_NAMES[:len(probs)]
     return pd.DataFrame({
-        "Class": [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES],
+        "Class": [CT_DISPLAY_LABELS[c] for c in labels],
         "Probability": [float(p) for p in probs]
     })
 
@@ -198,8 +194,8 @@ def plot_prob_pie(probs, title="Prediction Distribution"):
     return fig
 
 def plot_ct_prob_bar(probs, title="CT Class Probabilities"):
+    labels = [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES[:len(probs)]]
     fig, ax = plt.subplots(figsize=(6, 4))
-    labels = [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES]
     ax.bar(labels, probs)
     ax.set_ylim(0, 1)
     ax.set_ylabel("Probability")
@@ -208,8 +204,8 @@ def plot_ct_prob_bar(probs, title="CT Class Probabilities"):
     return fig
 
 def plot_ct_prob_pie(probs, title="CT Prediction Distribution"):
+    labels = [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES[:len(probs)]]
     fig, ax = plt.subplots(figsize=(5, 5))
-    labels = [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES]
     ax.pie(probs, labels=labels, autopct="%1.1f%%", startangle=90)
     ax.set_title(title)
     ax.axis("equal")
