@@ -29,10 +29,7 @@ DISPLAY_LABELS = {
     "lung_n": "Benign",
     "lung_scc": "Squamous Cell Carcinoma",
 }
-import os
 
-st.write("CT model path exists locally:", os.path.exists(CT_MODEL_PATH))
-st.write("Current working directory:", os.getcwd())
 # IMPORTANT:
 # Change this only if your Colab class_names order was different.
 CT_CLASS_NAMES = ["benign", "malignant", "normal"]
