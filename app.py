@@ -14,6 +14,7 @@ st.set_page_config(page_title="Lung Cancer AI Demo", layout="wide")
 XGB_PATH = "models/lung_cancer_calibrated_pipeline.joblib"
 OLD_CNN_PATH = "models/lung_histology_old_cnn.keras"
 NEW_CNN_PATH = "models/lung_histology_cnn.keras"
+CT_MODEL_PATH = "models/lung_ct_efficientnet.keras"
 CV_RESULTS_PATH = "lung_10fold_cv_results.csv"
 
 # -------------------------
@@ -21,11 +22,21 @@ CV_RESULTS_PATH = "lung_10fold_cv_results.csv"
 # -------------------------
 IMG_HEIGHT = 150
 IMG_WIDTH = 150
+
 CLASS_NAMES = ["lung_aca", "lung_n", "lung_scc"]
 DISPLAY_LABELS = {
     "lung_aca": "Adenocarcinoma",
     "lung_n": "Benign",
     "lung_scc": "Squamous Cell Carcinoma",
+}
+
+# IMPORTANT:
+# Change this only if your Colab class_names order was different.
+CT_CLASS_NAMES = ["benign", "malignant", "normal"]
+CT_DISPLAY_LABELS = {
+    "benign": "Benign",
+    "malignant": "Malignant",
+    "normal": "Normal",
 }
 
 XGB_THRESHOLD = 0.50
@@ -65,6 +76,10 @@ def load_old_cnn():
 def load_new_cnn():
     return tf.keras.models.load_model(NEW_CNN_PATH)
 
+@st.cache_resource
+def load_ct_cnn():
+    return tf.keras.models.load_model(CT_MODEL_PATH)
+
 @st.cache_data
 def load_cv_results():
     try:
@@ -75,37 +90,47 @@ def load_cv_results():
 xgb_model = load_xgb()
 old_cnn = load_old_cnn()
 new_cnn = load_new_cnn()
+ct_cnn = load_ct_cnn()
 cv_results = load_cv_results()
 
 # -------------------------
-# Session state for analysis
+# Session state
 # -------------------------
-if "last_xgb_prob" not in st.session_state:
-    st.session_state.last_xgb_prob = None
-if "last_xgb_flag" not in st.session_state:
-    st.session_state.last_xgb_flag = None
-if "last_xgb_inputs" not in st.session_state:
-    st.session_state.last_xgb_inputs = None
+session_defaults = {
+    "last_xgb_prob": None,
+    "last_xgb_flag": None,
+    "last_xgb_inputs": None,
 
-if "last_new_probs" not in st.session_state:
-    st.session_state.last_new_probs = None
-if "last_new_pred_class" not in st.session_state:
-    st.session_state.last_new_pred_class = None
+    "last_new_probs": None,
+    "last_new_pred_class": None,
 
-if "last_compare_old_probs" not in st.session_state:
-    st.session_state.last_compare_old_probs = None
-if "last_compare_new_probs" not in st.session_state:
-    st.session_state.last_compare_new_probs = None
-if "last_compare_ensemble_probs" not in st.session_state:
-    st.session_state.last_compare_ensemble_probs = None
+    "last_compare_old_probs": None,
+    "last_compare_new_probs": None,
+    "last_compare_ensemble_probs": None,
+
+    "last_ct_probs": None,
+    "last_ct_pred_class": None,
+    "last_ct_cancer_risk": None,
+}
+
+for key, value in session_defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 # -------------------------
 # Helpers
 # -------------------------
-def preprocess_image(uploaded_file):
+def preprocess_histology_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image_resized = image.resize((IMG_WIDTH, IMG_HEIGHT))
     arr = np.array(image_resized).astype("float32") / 255.0
+    arr = np.expand_dims(arr, axis=0)
+    return image, arr
+
+def preprocess_ct_image(uploaded_file):
+    image = Image.open(uploaded_file).convert("RGB")
+    image_resized = image.resize((224, 224))
+    arr = np.array(image_resized).astype("float32")
     arr = np.expand_dims(arr, axis=0)
     return image, arr
 
@@ -115,9 +140,21 @@ def predict_cnn(model, arr):
     pred_class = CLASS_NAMES[pred_idx]
     return pred_class, probs
 
+def predict_ct(model, arr):
+    probs = model.predict(arr, verbose=0)[0]
+    pred_idx = int(np.argmax(probs))
+    pred_class = CT_CLASS_NAMES[pred_idx]
+    return pred_class, probs
+
 def probs_to_df(probs):
     return pd.DataFrame({
         "Class": [DISPLAY_LABELS[c] for c in CLASS_NAMES],
+        "Probability": [float(p) for p in probs]
+    })
+
+def ct_probs_to_df(probs):
+    return pd.DataFrame({
+        "Class": [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES],
         "Probability": [float(p) for p in probs]
     })
 
@@ -126,9 +163,23 @@ def cancer_risk_from_probs(probs):
     scc_idx = CLASS_NAMES.index("lung_scc")
     return float(probs[aca_idx] + probs[scc_idx])
 
+def ct_cancer_risk_from_probs(probs):
+    malignant_idx = CT_CLASS_NAMES.index("malignant")
+    return float(probs[malignant_idx])
+
 def format_pct(x):
     return f"{x * 100:.2f}%"
 
+def confidence_label(prob):
+    if prob >= 0.85:
+        return "High"
+    if prob >= 0.60:
+        return "Moderate"
+    return "Low"
+
+# -------------------------
+# Plot helpers
+# -------------------------
 def plot_prob_bar(probs, title="Class Probabilities"):
     fig, ax = plt.subplots(figsize=(6, 4))
     labels = [DISPLAY_LABELS[c] for c in CLASS_NAMES]
@@ -142,6 +193,24 @@ def plot_prob_bar(probs, title="Class Probabilities"):
 def plot_prob_pie(probs, title="Prediction Distribution"):
     fig, ax = plt.subplots(figsize=(5, 5))
     labels = [DISPLAY_LABELS[c] for c in CLASS_NAMES]
+    ax.pie(probs, labels=labels, autopct="%1.1f%%", startangle=90)
+    ax.set_title(title)
+    ax.axis("equal")
+    return fig
+
+def plot_ct_prob_bar(probs, title="CT Class Probabilities"):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    labels = [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES]
+    ax.bar(labels, probs)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Probability")
+    ax.set_title(title)
+    plt.xticks(rotation=10)
+    return fig
+
+def plot_ct_prob_pie(probs, title="CT Prediction Distribution"):
+    fig, ax = plt.subplots(figsize=(5, 5))
+    labels = [CT_DISPLAY_LABELS[c] for c in CT_CLASS_NAMES]
     ax.pie(probs, labels=labels, autopct="%1.1f%%", startangle=90)
     ax.set_title(title)
     ax.axis("equal")
@@ -194,7 +263,7 @@ def plot_xgb_pie(prob):
     ax.axis("equal")
     return fig
 
-def plot_combined_scores(clinical_score, image_score, combined_score):
+def plot_combined_scores(clinical_score, histology_score, ct_score, combined_score):
     labels = []
     values = []
 
@@ -202,26 +271,23 @@ def plot_combined_scores(clinical_score, image_score, combined_score):
         labels.append("Clinical")
         values.append(clinical_score)
 
-    if image_score is not None:
-        labels.append("Image")
-        values.append(image_score)
+    if histology_score is not None:
+        labels.append("Histology")
+        values.append(histology_score)
+
+    if ct_score is not None:
+        labels.append("CT")
+        values.append(ct_score)
 
     labels.append("Combined")
     values.append(combined_score)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(7, 4))
     ax.bar(labels, values)
     ax.set_ylim(0, 1)
     ax.set_ylabel("Risk Score")
     ax.set_title("Combined Risk Components")
     return fig
-
-def confidence_label(prob):
-    if prob >= 0.85:
-        return "High"
-    if prob >= 0.60:
-        return "Moderate"
-    return "Low"
 
 # -------------------------
 # UI
@@ -229,12 +295,13 @@ def confidence_label(prob):
 st.title("Lung Cancer AI Demo")
 st.caption("Research prototype only. Not for clinical diagnosis or treatment.")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Clinical Risk (XGBoost)",
     "Histology Prediction (New CNN)",
     "Model Comparison",
+    "CT Scan Prediction",
     "Data Analysis",
-    "Combined Risk (Clinical + Image)"
+    "Combined Risk"
 ])
 
 # -------------------------
@@ -303,7 +370,7 @@ with tab1:
         st.dataframe(patient_df, use_container_width=True)
 
 # -------------------------
-# Tab 2: New CNN
+# Tab 2: Histology
 # -------------------------
 with tab2:
     st.subheader("Histopathology Image Prediction")
@@ -314,7 +381,7 @@ with tab2:
     )
 
     if uploaded_file is not None:
-        image, arr = preprocess_image(uploaded_file)
+        image, arr = preprocess_histology_image(uploaded_file)
         pred_class, probs = predict_cnn(new_cnn, arr)
         risk = cancer_risk_from_probs(probs)
 
@@ -333,7 +400,7 @@ with tab2:
             st.dataframe(probs_to_df(probs), use_container_width=True)
 
 # -------------------------
-# Tab 3: Compare models
+# Tab 3: Compare histology models
 # -------------------------
 with tab3:
     st.subheader("Old CNN vs New CNN vs Ensemble")
@@ -344,7 +411,7 @@ with tab3:
     )
 
     if uploaded_file_compare is not None:
-        image, arr = preprocess_image(uploaded_file_compare)
+        image, arr = preprocess_histology_image(uploaded_file_compare)
 
         old_pred_class, old_probs = predict_cnn(old_cnn, arr)
         new_pred_class, new_probs = predict_cnn(new_cnn, arr)
@@ -358,7 +425,6 @@ with tab3:
         st.image(image, caption="Uploaded image", use_container_width=False)
 
         agreement = (old_pred_class == new_pred_class == ensemble_pred_class)
-
         st.write(f"Model Agreement: **{'Strong' if agreement else 'Mixed'}**")
 
         c1, c2, c3 = st.columns(3)
@@ -382,13 +448,49 @@ with tab3:
             st.dataframe(probs_to_df(ensemble_probs), use_container_width=True)
 
 # -------------------------
-# Tab 4: Data Analysis
+# Tab 4: CT
 # -------------------------
 with tab4:
+    st.subheader("CT Scan Prediction")
+    ct_uploaded_file = st.file_uploader(
+        "Upload a CT scan image",
+        type=["png", "jpg", "jpeg"],
+        key="ctscan"
+    )
+
+    if ct_uploaded_file is not None:
+        ct_image, ct_arr = preprocess_ct_image(ct_uploaded_file)
+        ct_pred_class, ct_probs = predict_ct(ct_cnn, ct_arr)
+        ct_risk = ct_cancer_risk_from_probs(ct_probs)
+
+        st.session_state.last_ct_probs = ct_probs
+        st.session_state.last_ct_pred_class = ct_pred_class
+        st.session_state.last_ct_cancer_risk = ct_risk
+
+        c1, c2 = st.columns([1, 1])
+
+        with c1:
+            st.image(ct_image, caption="Uploaded CT scan", use_container_width=True)
+
+        with c2:
+            st.metric("Predicted CT Class", CT_DISPLAY_LABELS[ct_pred_class])
+            st.metric("CT Cancer Risk", format_pct(ct_risk))
+            st.write(f"Confidence Level: **{confidence_label(np.max(ct_probs))}**")
+            st.dataframe(ct_probs_to_df(ct_probs), use_container_width=True)
+
+        c3, c4 = st.columns(2)
+        with c3:
+            st.pyplot(plot_ct_prob_bar(ct_probs, title="CT Class Probabilities"))
+        with c4:
+            st.pyplot(plot_ct_prob_pie(ct_probs, title="CT Probability Distribution"))
+
+# -------------------------
+# Tab 5: Data Analysis
+# -------------------------
+with tab5:
     st.subheader("Data Analysis")
 
     st.markdown("## 1. XGBoost Clinical Dataset Analysis")
-    st.write("This section analyzes the structured clinical input model.")
     if st.session_state.last_xgb_prob is not None:
         c1, c2 = st.columns(2)
         with c1:
@@ -402,7 +504,6 @@ with tab4:
         st.info("Run a prediction in the Clinical Risk tab to see XGBoost analysis.")
 
     st.markdown("## 2. New CNN Dataset Analysis")
-    st.write("This section analyzes probability outputs from the improved CNN image model.")
     if st.session_state.last_new_probs is not None:
         c1, c2 = st.columns(2)
         with c1:
@@ -419,7 +520,6 @@ with tab4:
         st.info("Run a prediction in the Histology Prediction tab to see new CNN analysis.")
 
     st.markdown("## 3. Old vs New CNN Dataset Comparison")
-    st.write("This section compares outputs from the baseline CNN, improved CNN, and ensemble.")
     if (
         st.session_state.last_compare_old_probs is not None
         and st.session_state.last_compare_new_probs is not None
@@ -451,8 +551,20 @@ with tab4:
     else:
         st.info("Run a prediction in the Model Comparison tab to see old/new/ensemble analysis.")
 
-    st.markdown("## 4. 10-Fold Cross-Validation Summary")
-    st.write("This section summarizes performance on the improved validation dataset.")
+    st.markdown("## 4. CT Dataset Analysis")
+    if st.session_state.last_ct_probs is not None:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.pyplot(plot_ct_prob_bar(st.session_state.last_ct_probs, title="CT Class Probabilities"))
+        with c2:
+            st.pyplot(plot_ct_prob_pie(st.session_state.last_ct_probs, title="CT Probability Distribution"))
+
+        st.write(f"Last CT predicted class: **{CT_DISPLAY_LABELS[st.session_state.last_ct_pred_class]}**")
+        st.write(f"Last CT cancer risk: **{format_pct(st.session_state.last_ct_cancer_risk)}**")
+    else:
+        st.info("Run a prediction in the CT Scan Prediction tab to see CT analysis.")
+
+    st.markdown("## 5. 10-Fold Cross-Validation Summary")
     if cv_results is not None:
         st.dataframe(cv_results, use_container_width=True)
 
@@ -482,11 +594,11 @@ with tab4:
         st.warning("Could not load lung_10fold_cv_results.csv")
 
 # -------------------------
-# Tab 5: Combined Risk
+# Tab 6: Combined Risk
 # -------------------------
-with tab5:
-    st.subheader("Combined Risk (Clinical + Image)")
-    st.write("This page combines patient attributes and histology image analysis into a single risk assessment. It also works if only one input type is provided.")
+with tab6:
+    st.subheader("Combined Risk")
+    st.write("This page combines patient attributes, histology image analysis, and CT scan analysis into one risk score. It also works if only one or two input types are provided.")
 
     st.markdown("### Patient Attributes")
     c1, c2, c3 = st.columns(3)
@@ -517,19 +629,28 @@ with tab5:
     use_clinical = st.checkbox("Use patient attributes", value=True, key="use_clinical")
 
     st.markdown("### Histology Image")
-    combined_uploaded_file = st.file_uploader(
+    combined_histology_file = st.file_uploader(
         "Upload a histology image (optional)",
         type=["png", "jpg", "jpeg"],
-        key="combined_image"
+        key="combined_histology"
     )
-    use_image = st.checkbox("Use image in combined score", value=True, key="use_image")
+    use_histology = st.checkbox("Use histology image", value=True, key="use_histology")
+
+    st.markdown("### CT Scan Image")
+    combined_ct_file = st.file_uploader(
+        "Upload a CT scan image (optional)",
+        type=["png", "jpg", "jpeg"],
+        key="combined_ct"
+    )
+    use_ct = st.checkbox("Use CT image", value=True, key="use_ct")
 
     if st.button("Calculate Combined Risk", type="primary"):
         clinical_score = None
-        image_score = None
+        histology_score = None
+        ct_score = None
         combined_score = None
 
-        # Clinical score
+        # Clinical
         if use_clinical:
             patient_inputs = {
                 "AGE": c_age,
@@ -553,80 +674,82 @@ with tab5:
             patient_df = pd.DataFrame([patient_inputs], columns=FEATURE_COLUMNS)
             clinical_score = float(xgb_model.predict_proba(patient_df)[:, 1][0])
 
-        # Image score from average of old + new CNN
-        if use_image and combined_uploaded_file is not None:
-            image, arr = preprocess_image(combined_uploaded_file)
+        # Histology
+        if use_histology and combined_histology_file is not None:
+            hist_image, hist_arr = preprocess_histology_image(combined_histology_file)
+            old_pred_class, old_probs = predict_cnn(old_cnn, hist_arr)
+            new_pred_class, new_probs = predict_cnn(new_cnn, hist_arr)
+            hist_ensemble_probs = (old_probs + new_probs) / 2.0
+            hist_ensemble_pred_class = CLASS_NAMES[int(np.argmax(hist_ensemble_probs))]
+            histology_score = cancer_risk_from_probs(hist_ensemble_probs)
 
-            old_pred_class, old_probs = predict_cnn(old_cnn, arr)
-            new_pred_class, new_probs = predict_cnn(new_cnn, arr)
-            ensemble_probs = (old_probs + new_probs) / 2.0
-            ensemble_pred_class = CLASS_NAMES[int(np.argmax(ensemble_probs))]
-            image_score = cancer_risk_from_probs(ensemble_probs)
+        # CT
+        if use_ct and combined_ct_file is not None:
+            ct_image, ct_arr = preprocess_ct_image(combined_ct_file)
+            ct_pred_class, ct_probs = predict_ct(ct_cnn, ct_arr)
+            ct_score = ct_cancer_risk_from_probs(ct_probs)
 
-        # Combined logic
-        available_scores = [s for s in [clinical_score, image_score] if s is not None]
+        available_scores = [s for s in [clinical_score, histology_score, ct_score] if s is not None]
         if len(available_scores) > 0:
             combined_score = float(np.mean(available_scores))
 
-        # Output
         if combined_score is None:
-            st.error("No valid inputs selected. Use patient attributes, upload an image, or both.")
+            st.error("No valid inputs selected. Use attributes, histology image, CT scan, or any combination.")
         else:
-            c1, c2, c3 = st.columns(3)
+            c1, c2, c3, c4 = st.columns(4)
 
             with c1:
-                if clinical_score is not None:
-                    st.metric("Clinical Score", format_pct(clinical_score))
-                else:
-                    st.metric("Clinical Score", "Not Used")
-
+                st.metric("Clinical Score", format_pct(clinical_score) if clinical_score is not None else "Not Used")
             with c2:
-                if image_score is not None:
-                    st.metric("Image Score (Avg of 2 CNNs)", format_pct(image_score))
-                else:
-                    st.metric("Image Score", "Not Used")
-
+                st.metric("Histology Score", format_pct(histology_score) if histology_score is not None else "Not Used")
             with c3:
+                st.metric("CT Score", format_pct(ct_score) if ct_score is not None else "Not Used")
+            with c4:
                 st.metric("Combined Risk Score", format_pct(combined_score))
 
             st.write(f"Combined Confidence Level: **{confidence_label(combined_score)}**")
             st.write(f"Flagged above threshold ({XGB_THRESHOLD:.2f}): **{combined_score >= XGB_THRESHOLD}**")
 
-            st.pyplot(plot_combined_scores(clinical_score, image_score, combined_score))
+            st.pyplot(plot_combined_scores(clinical_score, histology_score, ct_score, combined_score))
 
-            if clinical_score is not None and image_score is not None:
-                st.write("Combination mode: **Clinical + Image average**")
-            elif clinical_score is not None:
-                st.write("Combination mode: **Clinical only**")
-            elif image_score is not None:
-                st.write("Combination mode: **Image only**")
+            modes = []
+            if clinical_score is not None:
+                modes.append("Clinical")
+            if histology_score is not None:
+                modes.append("Histology")
+            if ct_score is not None:
+                modes.append("CT")
+            st.write(f"Combination mode: **{' + '.join(modes)}**")
 
-            if use_clinical and clinical_score is not None:
+            if clinical_score is not None:
                 with st.expander("Show patient attributes used"):
                     st.dataframe(patient_df, use_container_width=True)
 
-            if use_image and combined_uploaded_file is not None and image_score is not None:
-                st.markdown("### Image-Based Analysis")
-                st.image(image, caption="Uploaded image", use_container_width=False)
+            if histology_score is not None:
+                st.markdown("### Histology-Based Analysis")
+                st.image(hist_image, caption="Uploaded histology image", use_container_width=False)
 
-                c4, c5, c6 = st.columns(3)
-                with c4:
+                c5, c6, c7 = st.columns(3)
+                with c5:
                     st.markdown("#### Old CNN")
                     st.write(f"Prediction: **{DISPLAY_LABELS[old_pred_class]}**")
                     st.dataframe(probs_to_df(old_probs), use_container_width=True)
-
-                with c5:
+                with c6:
                     st.markdown("#### New CNN")
                     st.write(f"Prediction: **{DISPLAY_LABELS[new_pred_class]}**")
                     st.dataframe(probs_to_df(new_probs), use_container_width=True)
-
-                with c6:
-                    st.markdown("#### Ensemble Image Output")
-                    st.write(f"Prediction: **{DISPLAY_LABELS[ensemble_pred_class]}**")
-                    st.dataframe(probs_to_df(ensemble_probs), use_container_width=True)
-
-                c7, c8 = st.columns(2)
                 with c7:
-                    st.pyplot(plot_prob_bar(ensemble_probs, title="Ensemble Class Probabilities"))
+                    st.markdown("#### Ensemble Output")
+                    st.write(f"Prediction: **{DISPLAY_LABELS[hist_ensemble_pred_class]}**")
+                    st.dataframe(probs_to_df(hist_ensemble_probs), use_container_width=True)
+
+            if ct_score is not None:
+                st.markdown("### CT-Based Analysis")
+                st.image(ct_image, caption="Uploaded CT scan", use_container_width=False)
+
+                c8, c9 = st.columns(2)
                 with c8:
-                    st.pyplot(plot_prob_pie(ensemble_probs, title="Ensemble Probability Distribution"))
+                    st.write(f"Prediction: **{CT_DISPLAY_LABELS[ct_pred_class]}**")
+                    st.dataframe(ct_probs_to_df(ct_probs), use_container_width=True)
+                with c9:
+                    st.pyplot(plot_ct_prob_pie(ct_probs, title="CT Probability Distribution"))
